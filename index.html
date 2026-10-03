@@ -7,6 +7,7 @@ header{padding:12px;background:#1d1d1d}button{font-size:16px;padding:10px 16px;m
 button.alt{background:#444}section{display:none;padding:12px}section.on{display:block}
 #qr{background:#fff;display:inline-block;padding:16px;border-radius:8px}#qr img{width:min(85vw,480px);image-rendering:pixelated}
 video{width:min(95vw,480px);border-radius:8px}#bar{height:10px;background:#333;border-radius:5px;margin:10px auto;width:min(95vw,480px)}#fill{height:100%;width:0;background:#2a7;border-radius:5px}
+.evo{width:min(85vw,480px);background:#1b1b1b;border-radius:8px;margin-top:8px}
 textarea{width:min(90vw,480px);height:80px}label{display:block;margin:8px}#out img,#out video{max-width:95vw}
 </style></head><body>
 <header><b>QR Beam</b> — send files phone-to-phone with only a screen and a camera<br>
@@ -17,13 +18,13 @@ textarea{width:min(90vw,480px);height:80px}label{display:block;margin:8px}#out i
 <label>…or type a message<br><textarea id="msg"></textarea></label>
 <label>Chunk size <input id="chunk" type="number" value="500" min="100" max="1500"> chars &nbsp; FPS <input id="fps" type="number" value="8" min="1" max="30" style="width:50px"></label>
 <button onclick="startSend()">Start beaming</button><button class="alt" onclick="stopSend()">Stop</button>
-<p id="sinfo"></p><div id="qr"></div>
+<p id="sinfo"></p><div id="qr"></div><div><canvas id="evoS" class="evo" width="480" height="140"></canvas></div>
 </section>
 
 <section id="recv">
 <button onclick="startRecv()">Start camera</button>
 <p id="rinfo">Point the camera at the sender's animated QR.</p>
-<div id="bar"><div id="fill"></div></div>
+<div id="bar"><div id="fill"></div></div><canvas id="evoR" class="evo" width="480" height="140"></canvas>
 <video id="cam" playsinline muted></video><canvas id="cv" hidden></canvas>
 <div id="out"></div>
 </section>
@@ -31,6 +32,42 @@ textarea{width:min(90vw,480px);height:80px}label{display:block;margin:8px}#out i
 <script>
 const $=id=>document.getElementById(id);
 function tab(t){for(const s of['send','recv'])$(s).classList.toggle('on',s===t)}
+
+// ---------- EVOLUTION ANIMATION ----------
+const STAGES=['Ape','Australopithecus','Homo habilis','Homo erectus','Homo sapiens'];
+const L=(a,b,t)=>a+(b-a)*t;
+function drawEvo(cv,t,phase){
+  const c=cv.getContext('2d'),W=cv.width,H=cv.height,G=H-22;c.clearRect(0,0,W,H);
+  c.strokeStyle='#444';c.lineWidth=2;c.beginPath();c.moveTo(10,G);c.lineTo(W-10,G);c.stroke();
+  // faded ghosts of all 5 stages
+  for(let i=0;i<5;i++)fig(c,40+i*(W-80)/4,G,i/4,0.3,'#333',0.8);
+  const x=40+t*(W-80);fig(c,x,G,t,phase,`hsl(${L(30,140,t)},60%,60%)`,1);
+  c.fillStyle='#ccc';c.font='13px system-ui';c.textAlign='center';
+  c.fillText(STAGES[Math.min(4,Math.round(t*4))]+`  ·  ${Math.round(t*100)}%`,W/2,H-5);
+}
+function fig(c,x,G,t,ph,col,sc){
+  const leg=L(26,44,t)*sc,torso=L(34,38,t)*sc,arm=L(44,30,t)*sc,head=L(9,8,t)*sc;
+  const lean=L(1.15,0.05,t),sw=Math.sin(ph*Math.PI*2);
+  const hip=[x,G-leg*L(0.85,0.97,t)];
+  const sh=[hip[0]+Math.sin(lean)*torso,hip[1]-Math.cos(lean)*torso];
+  c.strokeStyle=col;c.fillStyle=col;c.lineCap='round';c.lineJoin='round';
+  const limb=(o,ang,len,bend,w)=>{const k=[o[0]+Math.sin(ang)*len/2,o[1]+Math.cos(ang)*len/2];
+    const e=[k[0]+Math.sin(ang+bend)*len/2,k[1]+Math.cos(ang+bend)*len/2];
+    c.lineWidth=w;c.beginPath();c.moveTo(...o);c.lineTo(...k);c.lineTo(...e);c.stroke();};
+  // legs
+  limb(hip,0.45*sw,leg,-Math.max(0,sw)*0.6-L(0.4,0,t),7*sc);
+  limb(hip,-0.45*sw,leg,-Math.max(0,-sw)*0.6-L(0.4,0,t),7*sc);
+  // torso
+  c.lineWidth=L(13,10,t)*sc;c.beginPath();c.moveTo(...hip);c.lineTo(...sh);c.stroke();
+  // arms (ape: reach forward to the ground)
+  const aBase=L(0.5,0,t);
+  limb(sh,aBase+0.5*sw*L(0.4,1,t),arm,L(-0.2,0.3,t),6*sc);
+  limb(sh,aBase-0.5*sw*L(0.4,1,t),arm,L(-0.2,0.3,t),6*sc);
+  // head: jutting forward for ape, on top for human
+  const ha=lean+L(0.6,0,t);
+  c.beginPath();c.arc(sh[0]+Math.sin(ha)*(head+4*sc),sh[1]-Math.cos(ha)*(head+4*sc),head,0,7);c.fill();
+}
+(function idle(){drawEvo($('evoS'),0,0);drawEvo($('evoR'),0,0);})();
 
 // ---------- FOUNTAIN (LT) CODE ----------
 function rng(seed){let x=Math.imul(seed^0x9E3779B9,0x85EBCA6B)>>>0;x^=x>>>13;x=Math.imul(x,0xC2B2AE35)>>>0;x^=x>>>16;x=x||1;return()=>{x^=x<<13;x>>>=0;x^=x>>>17;x^=x<<5;x>>>=0;return x/4294967296;}}
@@ -64,7 +101,8 @@ async function startSend(){
     const set=seed<=K?[seed-1]:blockSet(seed,K,cdf),out=new Uint8Array(S);
     for(const j of set){const b=blocks[j];for(let k=0;k<S;k++)out[k]^=b[k];}
     const q=qrcode(0,'L');q.addData(`QB2|${id}|${K}|${L}|${S}|${seed}|${b64e(out)}`);q.make();
-    $('qr').innerHTML=q.createImgTag(4,0);seed++;
+    $('qr').innerHTML=q.createImgTag(4,0);
+    const P=Math.ceil(K*1.3);drawEvo($('evoS'),((seed-1)%P)/(P-1||1),seed/6);seed++;
   },1000/fps);
 }
 function stopSend(){clearInterval(timer);timer=null;}
@@ -101,7 +139,7 @@ async function startRecv(){
         if(fid!==id)reset(id,+K,+L,+S);
         if(!seen.has(seed)){seen.add(seed);
           addEq(+seed<=D.K?[+seed-1]:blockSet(+seed,D.K,D.cdf),b64d(b));
-          $('fill').style.width=(100*D.nk/D.K)+'%';
+          $('fill').style.width=(100*D.nk/D.K)+'%';drawEvo($('evoR'),D.nk/D.K,seen.size/6);
           $('rinfo').textContent=`Decoded ${D.nk} / ${D.K} blocks · ${seen.size} frames captured`;
           if(D.nk===D.K)finish();}
       }
