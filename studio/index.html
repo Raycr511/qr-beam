@@ -78,7 +78,7 @@ import { GIFEncoder, quantize, applyPalette } from './gifenc.esm.js';
 
 // ===== CONFIG: fill these in to launch payments =====
 const CONFIG = {
-  paymentLink: '',          // Stripe Payment Link URL, e.g. https://buy.stripe.com/xxxx
+  paymentLink: 'https://buy.stripe.com/fZufZh9hEdFM0iKdgC2Ji01',          // Stripe Payment Link URL, e.g. https://buy.stripe.com/xxxx
   unlockCode: 'BEAMPRO',    // set Stripe "after payment" redirect to  .../studio/?pro=BEAMPRO
   price: '$9 <small>one-time</small>',
   email: 'CONTACT_EMAIL'
@@ -86,7 +86,7 @@ const CONFIG = {
 // ====================================================
 
 const $=id=>document.getElementById(id), L=(a,b,t)=>a+(b-a)*t;
-$('yr').textContent=new Date().getFullYear();$('priceTxt').innerHTML=CONFIG.price;$('mail').href='mailto:'+CONFIG.email;
+$('yr').textContent=new Date().getFullYear();$('priceTxt').innerHTML=CONFIG.price;if(CONFIG.email.includes('@'))$('mail').href='mailto:'+CONFIG.email;else $('mail').style.display='none';
 const qs=new URLSearchParams(location.search);
 if(qs.get('pro')===CONFIG.unlockCode){localStorage.setItem('qbpro','1');history.replaceState(null,'',location.pathname);}
 let PRO=localStorage.getItem('qbpro')==='1';
