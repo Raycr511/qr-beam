@@ -5,7 +5,7 @@
 body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee;text-align:center}
 header{padding:12px;background:#1d1d1d}button{font-size:16px;padding:10px 16px;margin:4px;border-radius:8px;border:0;background:#2a7;color:#fff}
 button.alt{background:#444}section{display:none;padding:12px}section.on{display:block}
-#qr{background:#fff;display:inline-block;padding:16px;border-radius:8px}#qr img{width:min(85vw,480px);image-rendering:pixelated}
+#qr{background:#fff;display:inline-block;padding:16px;border-radius:8px}#qr canvas{width:min(85vw,480px);display:block}
 video{width:min(95vw,480px);border-radius:8px}#bar{height:10px;background:#333;border-radius:5px;margin:10px auto;width:min(95vw,480px)}#fill{height:100%;width:0;background:#2a7;border-radius:5px}
 .evo{width:min(85vw,480px);background:#1b1b1b;border-radius:8px;margin-top:8px}
 textarea{width:min(90vw,480px);height:80px}label{display:block;margin:8px}#out img,#out video{max-width:95vw}
@@ -17,8 +17,9 @@ textarea{width:min(90vw,480px);height:80px}label{display:block;margin:8px}#out i
 <label>Pick a file <input type="file" id="file"></label>
 <label>…or type a message<br><textarea id="msg"></textarea></label>
 <label>Chunk size <input id="chunk" type="number" value="500" min="100" max="1500"> chars &nbsp; FPS <input id="fps" type="number" value="8" min="1" max="30" style="width:50px"></label>
+<label><input type="checkbox" id="icon" checked> Evolution figure inside the QR (uses high error correction, slower)</label>
 <button onclick="startSend()">Start beaming</button><button class="alt" onclick="stopSend()">Stop</button>
-<p id="sinfo"></p><div id="qr"></div><div><canvas id="evoS" class="evo" width="480" height="140"></canvas></div>
+<p id="sinfo"></p><div id="qr"><canvas id="qrc" width="600" height="600"></canvas></div><div><canvas id="evoS" class="evo" width="480" height="140"></canvas></div>
 </section>
 
 <section id="recv">
@@ -80,6 +81,21 @@ function blockSet(seed,K,cdf){const r=rng(seed);let u=r(),d=1;while(d<K&&cdf[d]<
 const b64e=u=>{let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode(...u.subarray(i,i+8192));return btoa(s)};
 const b64d=s=>{const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u};
 
+function drawQR(q,icon,t,ph){
+  const cv=$('qrc'),c=cv.getContext('2d'),n=q.getModuleCount(),m=Math.floor(cv.width/(n+2)),off=Math.floor((cv.width-m*n)/2);
+  c.fillStyle='#fff';c.fillRect(0,0,cv.width,cv.height);c.fillStyle='#000';
+  for(let r=0;r<n;r++)for(let k=0;k<n;k++)if(q.isDark(r,k))c.fillRect(off+k*m,off+r*m,m,m);
+  if(!icon)return;
+  // clear a centre badge (~24% of width => ~6% of modules, well inside H's 30% recovery)
+  const bm=Math.round(n*0.24)|1,b=bm*m,bx=off+Math.floor((n-bm)/2)*m;
+  c.fillStyle='#fff';c.beginPath();c.roundRect(bx,bx,b,b,b*0.18);c.fill();
+  c.strokeStyle='#000';c.lineWidth=Math.max(2,m*0.6);c.stroke();
+  c.save();c.beginPath();c.roundRect(bx,bx,b,b,b*0.18);c.clip();
+  const sc=b/115,G=bx+b*0.88;
+  c.strokeStyle='#bbb';c.lineWidth=2;c.beginPath();c.moveTo(bx+b*0.1,G);c.lineTo(bx+b*0.9,G);c.stroke();
+  fig(c,bx+b*0.5-L(14,0,t)*sc,G,t,ph,`hsl(${L(25,150,t)},70%,38%)`,sc);
+  c.restore();
+}
 // ---------- SENDER ----------
 let timer=null;
 async function startSend(){
@@ -100,9 +116,9 @@ async function startSend(){
     // first K frames are plain blocks (fast start), then endless random mixes
     const set=seed<=K?[seed-1]:blockSet(seed,K,cdf),out=new Uint8Array(S);
     for(const j of set){const b=blocks[j];for(let k=0;k<S;k++)out[k]^=b[k];}
-    const q=qrcode(0,'L');q.addData(`QB2|${id}|${K}|${L}|${S}|${seed}|${b64e(out)}`);q.make();
-    $('qr').innerHTML=q.createImgTag(4,0);
-    const P=Math.ceil(K*1.3);drawEvo($('evoS'),((seed-1)%P)/(P-1||1),seed/6);seed++;
+    const icon=$('icon').checked,q=qrcode(0,icon?'H':'L');q.addData(`QB2|${id}|${K}|${L}|${S}|${seed}|${b64e(out)}`);q.make();
+    const P=Math.ceil(K*1.3),t=((seed-1)%P)/(P-1||1);
+    drawQR(q,icon,t,seed/6);drawEvo($('evoS'),t,seed/6);seed++;
   },1000/fps);
 }
 function stopSend(){clearInterval(timer);timer=null;}
