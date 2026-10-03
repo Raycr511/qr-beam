@@ -16,8 +16,8 @@ textarea{width:min(90vw,480px);height:80px}label{display:block;margin:8px}#out i
 <section id="send" class="on">
 <label>Pick a file <input type="file" id="file"></label>
 <label>…or type a message<br><textarea id="msg"></textarea></label>
-<label>Chunk size <input id="chunk" type="number" value="500" min="100" max="1500"> chars &nbsp; FPS <input id="fps" type="number" value="8" min="1" max="30" style="width:50px"></label>
-<label><input type="checkbox" id="icon" checked> Evolution figure inside the QR (uses high error correction, slower)</label>
+<label>Chunk size <input id="chunk" type="number" value="300" min="100" max="1500"> chars &nbsp; FPS <input id="fps" type="number" value="8" min="1" max="30" style="width:50px"></label>
+<label><input type="checkbox" id="icon" checked onchange="$('chunk').value=this.checked?300:500"> Evolution figure inside the QR (uses high error correction, slower)</label>
 <button onclick="startSend()">Start beaming</button><button class="alt" onclick="stopSend()">Stop</button>
 <p id="sinfo"></p><div id="qr"><canvas id="qrc" width="600" height="600"></canvas></div><div><canvas id="evoS" class="evo" width="480" height="140"></canvas></div>
 </section>
