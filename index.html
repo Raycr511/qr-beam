@@ -1,0 +1,127 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QR Beam – offline file transfer</title>
+<script src="qrcode.js"></script><script src="jsQR.js"></script>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee;text-align:center}
+header{padding:12px;background:#1d1d1d}button{font-size:16px;padding:10px 16px;margin:4px;border-radius:8px;border:0;background:#2a7;color:#fff}
+button.alt{background:#444}section{display:none;padding:12px}section.on{display:block}
+#qr{background:#fff;display:inline-block;padding:16px;border-radius:8px}#qr img{width:min(85vw,480px);image-rendering:pixelated}
+video{width:min(95vw,480px);border-radius:8px}#bar{height:10px;background:#333;border-radius:5px;margin:10px auto;width:min(95vw,480px)}#fill{height:100%;width:0;background:#2a7;border-radius:5px}
+textarea{width:min(90vw,480px);height:80px}label{display:block;margin:8px}#out img,#out video{max-width:95vw}
+</style></head><body>
+<header><b>QR Beam</b> — send files phone-to-phone with only a screen and a camera<br>
+<button onclick="tab('send')">Send</button><button class="alt" onclick="tab('recv')">Receive</button></header>
+
+<section id="send" class="on">
+<label>Pick a file <input type="file" id="file"></label>
+<label>…or type a message<br><textarea id="msg"></textarea></label>
+<label>Chunk size <input id="chunk" type="number" value="500" min="100" max="1500"> chars &nbsp; FPS <input id="fps" type="number" value="8" min="1" max="30" style="width:50px"></label>
+<button onclick="startSend()">Start beaming</button><button class="alt" onclick="stopSend()">Stop</button>
+<p id="sinfo"></p><div id="qr"></div>
+</section>
+
+<section id="recv">
+<button onclick="startRecv()">Start camera</button>
+<p id="rinfo">Point the camera at the sender's animated QR.</p>
+<div id="bar"><div id="fill"></div></div>
+<video id="cam" playsinline muted></video><canvas id="cv" hidden></canvas>
+<div id="out"></div>
+</section>
+
+<script>
+const $=id=>document.getElementById(id);
+function tab(t){for(const s of['send','recv'])$(s).classList.toggle('on',s===t)}
+
+// ---------- FOUNTAIN (LT) CODE ----------
+function rng(seed){let x=Math.imul(seed^0x9E3779B9,0x85EBCA6B)>>>0;x^=x>>>13;x=Math.imul(x,0xC2B2AE35)>>>0;x^=x>>>16;x=x||1;return()=>{x^=x<<13;x>>>=0;x^=x>>>17;x^=x<<5;x>>>=0;return x/4294967296;}}
+function soliton(K){const c=0.1,d=0.5,R=c*Math.log(K/d)*Math.sqrt(K),p=[0];
+  for(let i=1;i<=K;i++){let r=i==1?1/K:1/(i*(i-1));const t=Math.floor(K/R);
+    if(i<t)r+=R/(i*K);else if(i==t)r+=R*Math.log(R/d)/K;p.push(r);}
+  let s=0;const cdf=p.map(v=>s+=v);return cdf.map(v=>v/s);}
+function blockSet(seed,K,cdf){const r=rng(seed);let u=r(),d=1;while(d<K&&cdf[d]<u)d++;
+  const set=new Set();while(set.size<d)set.add(Math.floor(r()*K));return [...set];}
+const b64e=u=>{let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode(...u.subarray(i,i+8192));return btoa(s)};
+const b64d=s=>{const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u};
+
+// ---------- SENDER ----------
+let timer=null;
+async function startSend(){
+  stopSend();
+  let name,type,bytes;
+  const f=$('file').files[0];
+  if(f){name=f.name;type=f.type||'application/octet-stream';bytes=new Uint8Array(await f.arrayBuffer());}
+  else{name='message.txt';type='text/plain';bytes=new TextEncoder().encode($('msg').value);}
+  const meta=new TextEncoder().encode(JSON.stringify({name,type,len:bytes.length,crc:crc32(bytes)}));
+  const L=4+meta.length+bytes.length,payload=new Uint8Array(L);
+  new DataView(payload.buffer).setUint32(0,meta.length);payload.set(meta,4);payload.set(bytes,4+meta.length);
+  const S=Math.floor(+$('chunk').value*3/4),K=Math.ceil(L/S),cdf=soliton(K);
+  const blocks=[];for(let i=0;i<K;i++){const b=new Uint8Array(S);b.set(payload.subarray(i*S,(i+1)*S));blocks.push(b);}
+  const id=Math.random().toString(36).slice(2,7),fps=+$('fps').value;
+  $('sinfo').textContent=`${name} · ${bytes.length} bytes · ${K} source blocks · needs ~${Math.ceil(K*1.15)} frames (~${(K*1.15/fps).toFixed(1)}s)`;
+  let seed=1;
+  timer=setInterval(()=>{
+    // first K frames are plain blocks (fast start), then endless random mixes
+    const set=seed<=K?[seed-1]:blockSet(seed,K,cdf),out=new Uint8Array(S);
+    for(const j of set){const b=blocks[j];for(let k=0;k<S;k++)out[k]^=b[k];}
+    const q=qrcode(0,'L');q.addData(`QB2|${id}|${K}|${L}|${S}|${seed}|${b64e(out)}`);q.make();
+    $('qr').innerHTML=q.createImgTag(4,0);seed++;
+  },1000/fps);
+}
+function stopSend(){clearInterval(timer);timer=null;}
+
+// ---------- RECEIVER ----------
+let D,done=false,fid=null,seen;
+function reset(id,K,L,S){fid=id;D={K,L,S,cdf:soliton(K),known:new Array(K),nk:0,pend:[]};seen=new Set();}
+function addEq(set,data){
+  set=new Set(set);
+  for(const j of [...set])if(D.known[j]){xor(data,D.known[j]);set.delete(j);}
+  if(set.size===0)return;
+  if(set.size>1){D.pend.push({set,data});return;}
+  const queue=[[[...set][0],data]];
+  while(queue.length){const [j,d]=queue.pop();if(D.known[j])continue;D.known[j]=d;D.nk++;
+    for(const e of D.pend){if(e.set.has(j)){xor(e.data,d);e.set.delete(j);if(e.set.size===1)queue.push([[...e.set][0],e.data]);}}
+    D.pend=D.pend.filter(e=>e.set.size>1);}
+}
+function xor(a,b){for(let i=0;i<a.length;i++)a[i]^=b[i];}
+async function startRecv(){
+  done=false;fid=null;$('out').innerHTML='';$('fill').style.width='0';
+  let s;
+  try{ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('Camera API not available here');
+    s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280}}});
+  }catch(e){$('rinfo').innerHTML='Camera could not start ('+e.name+': '+e.message+').<br>Open this page directly in Safari or Chrome, not inside an in-app viewer, and allow camera access.';return;}
+  const v=$('cam');v.srcObject=s;await v.play();
+  const cv=$('cv'),cx=cv.getContext('2d',{willReadFrequently:true});
+  (function loop(){
+    if(done){s.getTracks().forEach(t=>t.stop());return;}
+    if(v.readyState>=2){
+      cv.width=v.videoWidth;cv.height=v.videoHeight;cx.drawImage(v,0,0);
+      const r=jsQR(cx.getImageData(0,0,cv.width,cv.height).data,cv.width,cv.height,{inversionAttempts:'dontInvert'});
+      if(r&&r.data.startsWith('QB2|')){
+        const [_,id,K,L,S,seed,b]=r.data.split('|');
+        if(fid!==id)reset(id,+K,+L,+S);
+        if(!seen.has(seed)){seen.add(seed);
+          addEq(+seed<=D.K?[+seed-1]:blockSet(+seed,D.K,D.cdf),b64d(b));
+          $('fill').style.width=(100*D.nk/D.K)+'%';
+          $('rinfo').textContent=`Decoded ${D.nk} / ${D.K} blocks · ${seen.size} frames captured`;
+          if(D.nk===D.K)finish();}
+      }
+    }
+    requestAnimationFrame(loop);
+  })();
+}
+function finish(){
+  done=true;
+  const p=new Uint8Array(D.K*D.S);D.known.forEach((b,i)=>p.set(b,i*D.S));
+  const ml=new DataView(p.buffer).getUint32(0),meta=JSON.parse(new TextDecoder().decode(p.subarray(4,4+ml)));
+  const bytes=p.slice(4+ml,4+ml+meta.len),ok=crc32(bytes)===meta.crc;
+  const url=URL.createObjectURL(new Blob([bytes],{type:meta.type}));
+  let html=`<p>${ok?'Checksum OK':'Checksum mismatch'} — ${meta.name} (${meta.len} bytes)</p>`;
+  if(meta.type.startsWith('text'))html+=`<pre style="white-space:pre-wrap;text-align:left;background:#222;padding:10px">${new TextDecoder().decode(bytes).replace(/</g,'&lt;')}</pre>`;
+  else if(meta.type.startsWith('image'))html+=`<img src="${url}">`;
+  else if(meta.type.startsWith('video'))html+=`<video src="${url}" controls></video>`;
+  html+=`<p><a style="color:#6f6" href="${url}" download="${meta.name}">Save file</a></p>`;
+  $('out').innerHTML=html;$('rinfo').textContent='Transfer complete';
+}
+function crc32(b){let c,t=crc32.t;if(!t){t=crc32.t=[];for(let n=0;n<256;n++){c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}}
+  c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=t[(c^b[i])&255]^(c>>>8);return (c^0xFFFFFFFF)>>>0;}
+</script></body></html>
